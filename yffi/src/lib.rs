@@ -7,8 +7,9 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::Arc;
 use yrs::block::{ClientID, EmbedPrelim, ItemContent, Prelim, Unused};
 use yrs::branch::BranchPtr;
-use yrs::encoding::read::Error;
+use yrs::encoding::read::{Cursor, Error};
 use yrs::error::UpdateError;
+use yrs::sync::{Message, SyncMessage};
 use yrs::types::array::ArrayEvent;
 use yrs::types::array::ArrayIter as NativeArrayIter;
 use yrs::types::map::MapEvent;
@@ -29,6 +30,172 @@ use yrs::{
     XmlElementPrelim, XmlElementRef, XmlFragmentRef, XmlTextPrelim, XmlTextRef, ID,
 };
 
+#[no_mangle]
+pub extern "C" fn decode_message(
+    data: *const u8,
+    len: usize,
+    doc_ptr: *mut Doc,
+    lenData: *mut usize,
+) -> *mut u8 {
+    // Validate input pointers.
+    if data.is_null() || doc_ptr.is_null() {
+        println!("Received null pointer.");
+        return std::ptr::null_mut();
+    }
+    let doc = unsafe { &*doc_ptr };
+    // Create a byte slice from the input data.
+    let slice = unsafe { std::slice::from_raw_parts(data, len) };
+    let cursor = Cursor::new(slice);
+    let mut decoder = DecoderV1::new(cursor);
+
+    // Attempt to decode the message.
+    match Message::decode(&mut decoder) {
+        Ok(message) => {
+            match message {
+                Message::Sync(sync_msg) => {
+                    // println!("Entered Message::Sync case.");
+                    match sync_msg {
+                        SyncMessage::SyncStep1(state_vector) => {
+                            // println!("Handling SyncStep1.");
+
+                            // Handle SyncStep1: Generate an update based on the state vector.
+                           
+                                let txn = doc.transact();
+                                let encoded_update = txn.encode_state_as_update_v1(&state_vector);
+          
+                                let sync_message = Message::Sync(SyncMessage::SyncStep2(encoded_update));
+    
+                                let mut encoder = EncoderV1::new();
+                                
+                                sync_message.encode(&mut encoder);
+                            
+                                let encoded_message = encoder.to_vec();
+                                unsafe {
+                                    *lenData = encoded_message.len();
+                                }
+                                // Convert the byte vector into a Box<[u8]> and then into a raw pointer
+                                let ptr = Box::into_raw(encoded_message.into_boxed_slice()) as *mut u8;
+                            
+                                // Return the pointer to the caller
+                                ptr
+                        }
+                        SyncMessage::SyncStep2(update) => {
+                            // println!("Handling SyncStep2.");
+                           
+                            let decodedUpdate = Update::decode_v1(&update).unwrap();
+                            let mut txn = doc.transact_mut();
+                            txn.apply_update(decodedUpdate);
+                            // Currently, returning null as no action is defined.
+                            return std::ptr::null_mut();
+                        }
+                        SyncMessage::Update(update) => {
+                            // println!("Handling Update.");
+
+                            let decodedUpdate = Update::decode_v1(&update).unwrap();
+                            let mut txn = doc.transact_mut();
+                            txn.apply_update(decodedUpdate);
+                            // Currently, returning null as no action is defined.
+                            return std::ptr::null_mut();
+                        }
+                    }
+                }
+                Message::Auth(reason_opt) => {
+                    // println!("Handling Auth message.");
+                    // Currently, returning null as no action is defined.
+                    return std::ptr::null_mut();
+                }
+                Message::AwarenessQuery => {
+                    // println!("Handling AwarenessQuery message.");
+                    // Currently, returning null as no action is defined.
+                    return std::ptr::null_mut();
+                }
+                Message::Awareness(update) => {
+                    // println!("Handling Awareness message.");
+                    // Currently, returning null as no action is defined.
+                    return std::ptr::null_mut();
+                }
+                Message::Custom(_tag, data) => {
+                    // println!("Handling Custom message.");
+                    // Currently, returning null as no action is defined.
+                    return std::ptr::null_mut();
+                }
+            }
+        }
+        Err(_) => {
+            println!("Decoding failed.");
+            // Decoding failed, return null pointer.
+            return std::ptr::null_mut();
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free_decoded_message(msg: *mut c_char) {
+    unsafe {
+        if !msg.is_null() {
+            CString::from_raw(msg);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn yprotocol_encode_update(update_ptr: *const u8, update_len: usize, len: *mut usize) -> *mut u8 {
+    // Safety: Ensure that the update_ptr is not null
+    let update = unsafe { std::slice::from_raw_parts(update_ptr, update_len) };
+
+    // Create a new encoder for the message
+    let mut encoder = EncoderV1::new();
+
+    // Create the Update message
+    let sync_message = Message::Sync(SyncMessage::Update(update.to_vec()));
+
+    // Encode the message into the encoder
+    sync_message.encode(&mut encoder);
+
+    // Convert the encoder to a byte vector
+    let encoded_message = encoder.to_vec();
+
+    // Return the length of the encoded message
+    unsafe {
+        *len = encoded_message.len();
+    }
+
+    // Convert the byte vector into a Box<[u8]> and then into a raw pointer
+    let buffer = Box::into_raw(encoded_message.into_boxed_slice()) as *mut u8;
+
+    // Return the pointer to the caller
+    buffer
+}
+
+#[no_mangle]
+pub extern "C" fn yprotocol_encode_sync_step1(doc_ptr: *const Doc, len: *mut usize) -> *mut u8 {
+    // Safety: Ensure that the doc_ptr is not null
+    let doc = unsafe { &*doc_ptr };
+    
+    // Create a new encoder for the message
+    let mut encoder = EncoderV1::new();
+
+    // Create the SyncStep1 message using the document's state vector
+    let state_vector = doc.transact().state_vector();
+    let sync_message = Message::Sync(SyncMessage::SyncStep1(state_vector));
+
+    // Encode the message into the encoder
+    sync_message.encode(&mut encoder);
+
+    // Convert the encoder to a byte vector
+    let encoded_message = encoder.to_vec();
+
+    // Return the length of the encoded message
+    unsafe {
+        *len = encoded_message.len();
+    }
+
+    // Convert the byte vector into a Box<[u8]> and then into a raw pointer
+    let buffer = Box::into_raw(encoded_message.into_boxed_slice()) as *mut u8;
+
+    // Return the pointer to the caller
+    buffer
+}
 /// Flag used by `YInput` to pass JSON string for an object that should be deserialized and
 /// stored internally as fully fledged scalar type.
 pub const Y_JSON: i8 = -9;
@@ -481,7 +648,8 @@ impl CallbackState {
 pub unsafe extern "C" fn ydoc_observe_updates_v1(
     doc: *mut Doc,
     state: *mut c_void,
-    cb: extern "C" fn(*mut c_void, u32, *const c_char),
+    guid: *mut c_char,
+    cb: extern "C" fn(*mut c_void, u32, *const c_char,*mut c_char),
 ) -> *mut Subscription {
     let state = CallbackState::new(state);
     let doc = doc.as_ref().unwrap();
@@ -489,12 +657,11 @@ pub unsafe extern "C" fn ydoc_observe_updates_v1(
         .observe_update_v1(move |_, e| {
             let bytes = &e.update;
             let len = bytes.len() as u32;
-            cb(state.0, len, bytes.as_ptr() as *const c_char)
+            cb(state.0, len, bytes.as_ptr() as *const c_char,guid)
         })
         .unwrap();
     Box::into_raw(Box::new(subscription))
 }
-
 #[no_mangle]
 pub unsafe extern "C" fn ydoc_observe_updates_v2(
     doc: *mut Doc,
@@ -3705,7 +3872,8 @@ pub unsafe extern "C" fn ytext_observe(
 pub unsafe extern "C" fn ymap_observe(
     map: *const Branch,
     state: *mut c_void,
-    cb: extern "C" fn(*mut c_void, *const YMapEvent),
+    guid: *mut c_char,
+    cb: extern "C" fn(*mut c_void, *const YMapEvent,*mut c_char),
 ) -> *mut Subscription {
     assert!(!map.is_null());
     let state = CallbackState::new(state);
@@ -3713,7 +3881,7 @@ pub unsafe extern "C" fn ymap_observe(
     let map = MapRef::from_raw_branch(map);
     let subscription = map.observe(move |txn, e| {
         let e = YMapEvent::new(e, txn);
-        cb(state.0, &e as *const YMapEvent);
+        cb(state.0, &e as *const YMapEvent,guid);
     });
     Box::into_raw(Box::new(subscription))
 }

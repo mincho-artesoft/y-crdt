@@ -1,3 +1,6 @@
+cbindgen --config ./yffi/cbindgen.toml --crate yffi --output ./tests-ffi/include/libyrs.h --lang C 
+
+
 # Y CRDT
 
 <p align="center">

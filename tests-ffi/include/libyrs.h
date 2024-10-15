@@ -27,6 +27,11 @@
 #ifndef YRS_FFI_H
 #define YRS_FFI_H
 
+
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
 /**
  * A Yrs document type. Documents are most important units of collaborative resources management.
  * All shared collections live within a scope of their corresponding documents. All updates are
@@ -88,12 +93,14 @@ typedef struct LinkSource {} LinkSource;
 typedef struct Unquote {} Unquote;
 typedef struct StickyIndex {} StickyIndex;
 typedef struct YSubscription {} YSubscription;
+typedef struct Message {} Message;
+typedef struct StateVector {} StateVector;
+typedef struct Awareness {} Awareness;
+typedef struct AwarenessUpdate {} AwarenessUpdate;
+typedef struct DefaultProtocol {} DefaultProtocol;
+typedef uint64_t Timestamp;
 
 
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdlib.h>
 
 /**
  * Flag used by `YInput` to pass JSON string for an object that should be deserialized and
@@ -325,6 +332,17 @@ typedef struct YSubscription {} YSubscription;
 typedef struct TransactionInner TransactionInner;
 
 /**
+ * A Yrs document type. Documents are the most important units of collaborative resources management.
+ * All shared collections live within a scope of their corresponding documents. All updates are
+ * generated on per-document basis (rather than individual shared type). All operations on shared
+ * collections happen via `YTransaction`, which lifetime is also bound to a document.
+ *
+ * Document manages so-called root types, which are top-level shared types definitions (as opposed
+ * to recursively nested types).
+ */
+typedef YDoc YDoc;
+
+/**
  * Configuration object used by `YDoc`.
  */
 typedef struct YOptions {
@@ -370,17 +388,6 @@ typedef struct YOptions {
    */
   uint8_t should_load;
 } YOptions;
-
-/**
- * A Yrs document type. Documents are the most important units of collaborative resources management.
- * All shared collections live within a scope of their corresponding documents. All updates are
- * generated on per-document basis (rather than individual shared type). All operations on shared
- * collections happen via `YTransaction`, which lifetime is also bound to a document.
- *
- * Document manages so-called root types, which are top-level shared types definitions (as opposed
- * to recursively nested types).
- */
-typedef YDoc YDoc;
 
 /**
  * A common shared data type. All Yrs instances can be refered to using this data type (use
@@ -1092,6 +1099,14 @@ typedef struct YBranchId {
   union YBranchIdVariant variant;
 } YBranchId;
 
+uint8_t *decode_message(const uint8_t *data, uintptr_t len, YDoc *doc_ptr, uintptr_t *lenData);
+
+void free_decoded_message(char *msg);
+
+uint8_t *yprotocol_encode_update(const uint8_t *update_ptr, uintptr_t update_len, uintptr_t *len);
+
+uint8_t *yprotocol_encode_sync_step1(const YDoc *doc_ptr, uintptr_t *len);
+
 /**
  * Returns default ceonfiguration for `YOptions`.
  */
@@ -1181,9 +1196,10 @@ uint8_t ydoc_should_load(YDoc *doc);
  */
 uint8_t ydoc_auto_load(YDoc *doc);
 
-YSubscription *ydoc_observe_updates_v1(YDoc *doc, void *state, void (*cb)(void*,
-                                                                          uint32_t,
-                                                                          const char*));
+YSubscription *ydoc_observe_updates_v1(YDoc *doc, void *state, char *guid, void (*cb)(void*,
+                                                                                      uint32_t,
+                                                                                      const char*,
+                                                                                      char*));
 
 YSubscription *ydoc_observe_updates_v2(YDoc *doc, void *state, void (*cb)(void*,
                                                                           uint32_t,
@@ -2306,8 +2322,10 @@ YSubscription *ytext_observe(const Branch *txt, void *state, void (*cb)(void*,
  * Returns a subscription ID which can be then used to unsubscribe this callback by using
  * `yunobserve` function.
  */
-YSubscription *ymap_observe(const Branch *map, void *state, void (*cb)(void*,
-                                                                       const struct YMapEvent*));
+YSubscription *ymap_observe(const Branch *map,
+                            void *state,
+                            char *guid,
+                            void (*cb)(void*, const struct YMapEvent*, char*));
 
 /**
  * Subscribes a given callback function `cb` to changes made by this `YArray` instance. Callbacks

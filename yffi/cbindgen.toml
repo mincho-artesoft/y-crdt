@@ -92,6 +92,12 @@ typedef struct LinkSource {} LinkSource;
 typedef struct Unquote {} Unquote;
 typedef struct StickyIndex {} StickyIndex;
 typedef struct YSubscription {} YSubscription;
+typedef struct Message {} Message;
+typedef struct StateVector {} StateVector;
+typedef struct Awareness {} Awareness;
+typedef struct AwarenessUpdate {} AwarenessUpdate;
+typedef struct DefaultProtocol {} DefaultProtocol;
+typedef uint64_t Timestamp;
 """
 
 trailer = """
